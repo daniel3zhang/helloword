@@ -1,0 +1,2564 @@
+{
+  "Description": "One Sony Developer - DEV Front-end environment CloudFormation template. Currently provisions: VPC, Subnets, iGW, routing, security groups, ELB, EC2 instances, S3 buckets, LaunchConfiguration, AutoScaling",
+  "Parameters": {
+    "CumulusVersion": {
+      "Type": "String",
+      "Description": "Version of the software"
+    },
+    "CumulusEnvironment": {
+      "Type": "String",
+      "Description": "Cumulus environment name"
+    },
+    "CumulusBundleBucket": {
+      "Type": "String",
+      "Description": "Cumulus bundle bucket name"
+    },
+    "KeyName": {
+      "Default": "osddev",
+      "Type": "String",
+      "Description": "AWS key to use"
+    },
+    "DBPassword": {
+      "Type": "String",
+      "Description": "The database admin account password",
+      "Default": "oh6f42u8gWN56As",
+      "MinLength": "10",
+      "AllowedPattern": "[a-zA-Z0-9]*",
+      "NoEcho": "true",
+      "MaxLength": "41",
+      "ConstraintDescription": "must contain only alphanumeric characters."
+    },
+    "DBUser": {
+      "Type": "String",
+      "Description": "The database admin account username",
+      "Default": "osddev",
+      "MinLength": "1",
+      "AllowedPattern": "[a-zA-Z][a-zA-Z0-9]*",
+      "NoEcho": "true",
+      "MaxLength": "16",
+      "ConstraintDescription": "must begin with a letter and contain only alphanumeric characters."
+    },
+    "InstanceType": {
+      "Default": "m3.medium",
+      "Type": "String",
+      "ConstraintDescription": "must be a valid EC2 instance type.",
+      "Description": "EC2 instance type",
+      "AllowedValues": [
+        "t1.micro",
+        "m1.small",
+        "m3.medium",
+        "m3.large",
+        "m3.xlarge",
+        "m2.xlarge",
+        "m2.2xlarge",
+        "m2.4xlarge",
+        "c1.medium",
+        "c1.xlarge",
+        "cc1.4xlarge",
+        "cc2.8xlarge",
+        "cg1.4xlarge"
+      ]
+    }
+  },
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Outputs": {
+    "SQSReadDeleteSESAccessKeyID": {
+      "Description": "SQSReadDeleteSESAccessKey ID",
+      "Value": {
+        "Ref": "SQSReadDeleteSESAccessKey"
+      }
+    },
+    "SQSReadDeleteSESAccessKeySecret": {
+      "Description": "SQSReadDeleteSESAccessKey Secret",
+      "Value": {
+        "Fn::GetAtt": [
+          "SQSReadDeleteSESAccessKey",
+          "SecretAccessKey"
+        ]
+      }
+    },
+    "CumulusBundleHandlerUserAccessKeyID": {
+      "Description": "CumulusBundleHandlerUserAccessKey ID",
+      "Value": {
+        "Ref": "CumulusBundleHandlerUserAccessKey"
+      }
+    },
+    "CumulusBundleHandlerUserAccessKeySecret": {
+      "Description": "CumulusBundleHandlerUserAccessKey Secret",
+      "Value": {
+        "Fn::GetAtt": [
+          "CumulusBundleHandlerUserAccessKey",
+          "SecretAccessKey"
+        ]
+      }
+    }    
+  },
+  "Resources": {
+    "InboundDynamicPortsPublicNetworkAclEntry": {
+      "Type": "AWS::EC2::NetworkAclEntry",
+      "Properties": {
+        "NetworkAclId": {
+          "Ref": "PublicNetworkAcl"
+        },
+        "RuleNumber": "103",
+        "Protocol": "6",
+        "PortRange": {
+          "To": "65535",
+          "From": "1024"
+        },
+        "Egress": "false",
+        "RuleAction": "allow",
+        "CidrBlock": "0.0.0.0/0"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "f1683882-e786-4272-b124-511ff8ae812d"
+        }
+      }
+    },
+    "ServerKeys": {
+      "Type": "AWS::IAM::AccessKey",
+      "Properties": {
+        "UserName": "system.cloudformation"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "3607695d-881c-4504-a962-21deafbb23b4"
+        }
+      }
+    },
+    "CumulusBundleHandlerUser": {
+      "Properties": {
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Action": [
+                    "s3:*"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": [
+                    "*"
+                  ]
+                },
+                {
+                  "Action": [
+                    "cloudformation:DescribeStackResource",
+                    "cloudformation:DescribeStacks",
+                    "cloudformation:DescribeStackEvents",
+                    "cloudformation:DescribeStackResources",
+                    "cloudformation:ValidateTemplate",
+                    "cloudformation:ListStacks",
+                    "ec2:Describe*",
+                    "ec2:Get*",
+                    "autoscaling:Describe*",
+                    "autoscaling:Update*",
+                    "cloudformation:UpdateStack"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": [
+                    "*"
+                  ]
+                }
+              ],
+              "Version": "2012-10-17"
+            },
+            "PolicyName": "system.cumulus_bundle_handler"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::User"
+    },
+    "CumulusBundleHandlerUserAccessKey": {
+      "Type": "AWS::IAM::AccessKey",
+      "Properties": {
+        "UserName": {
+          "Ref": "CumulusBundleHandlerUser"
+        }
+      }
+    },    
+    "OutBoundHTTPSPublicNetworkAclEntry": {
+      "Type": "AWS::EC2::NetworkAclEntry",
+      "Properties": {
+        "NetworkAclId": {
+          "Ref": "PublicNetworkAcl"
+        },
+        "RuleNumber": "101",
+        "Protocol": "6",
+        "PortRange": {
+          "To": "443",
+          "From": "443"
+        },
+        "Egress": "true",
+        "RuleAction": "allow",
+        "CidrBlock": "0.0.0.0/0"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "5b904384-fef8-4535-8e33-a9ce9e860ca2"
+        }
+      }
+    },
+    "WaitHandle": {
+      "Type": "AWS::CloudFormation::WaitConditionHandle",
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "178a0d04-724a-4c21-bf04-2bd6a967cf91"
+        }
+      }
+    },
+    "PublicSubnet2RouteTableAssociation": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PublicSubnet2"
+        },
+        "RouteTableId": {
+          "Ref": "PublicRouteTable"
+        }
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "18685e83-da81-4bb9-88c9-6c2698efa7f6"
+        }
+      }
+    },
+    "InboundSSLPublicNetworkAclEntry": {
+      "Type": "AWS::EC2::NetworkAclEntry",
+      "Properties": {
+        "NetworkAclId": {
+          "Ref": "PublicNetworkAcl"
+        },
+        "RuleNumber": "102",
+        "Protocol": "6",
+        "PortRange": {
+          "To": "22",
+          "From": "22"
+        },
+        "Egress": "false",
+        "RuleAction": "allow",
+        "CidrBlock": "0.0.0.0/0"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "58fd7cfa-8075-44ec-873f-6cca4ab59ead"
+        }
+      }
+    },
+    "S3BucketDeveloperSonyComBundles": {
+      "DeletionPolicy": "Delete",
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "AccessControl": "Private",
+        "BucketName": "developer.sony.com.bundles.dev"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "286f67cc-44a6-4a29-a543-c72abb145059"
+        }
+      }
+    },
+    "PublicRoute": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "GatewayId": {
+          "Ref": "InternetGateway"
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "RouteTableId": {
+          "Ref": "PublicRouteTable"
+        }
+      },
+      "DependsOn": "AttachGateway",
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "f7f47623-5a29-4c7c-a5c7-e83a8e326e1e"
+        }
+      }
+    },
+    "OutBoundWhoisPortPublicNetworkAclEntry": {
+      "Type": "AWS::EC2::NetworkAclEntry",
+      "Properties": {
+        "NetworkAclId": {
+          "Ref": "PublicNetworkAcl"
+        },
+        "RuleNumber": "105",
+        "Protocol": "6",
+        "PortRange": {
+          "To": "43",
+          "From": "43"
+        },
+        "Egress": "true",
+        "RuleAction": "allow",
+        "CidrBlock": "0.0.0.0/0"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "64b1fcbf-7113-446b-91bd-c0935bee7e8b"
+        }
+      }
+    },
+    "OutBoundDynamicPortPublicNetworkAclEntry": {
+      "Type": "AWS::EC2::NetworkAclEntry",
+      "Properties": {
+        "NetworkAclId": {
+          "Ref": "PublicNetworkAcl"
+        },
+        "RuleNumber": "103",
+        "Protocol": "6",
+        "PortRange": {
+          "To": "65535",
+          "From": "1024"
+        },
+        "Egress": "true",
+        "RuleAction": "allow",
+        "CidrBlock": "0.0.0.0/0"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "037a9ed5-b743-446d-80f4-0df74b588db2"
+        }
+      }
+    },
+    "S3BucketDeveloperSonyComLogsDev": {
+      "DeletionPolicy": "Delete",
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "AccessControl": "Private",
+        "BucketName": "developer.sony.com.logs.dev"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "c6f597d5-4b01-4515-9dff-fbe3c7137c55"
+        }
+      }
+    },
+    "InternetGateway": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {
+        "Tags": [
+          {
+            "Value": {
+              "Ref": "AWS::StackId"
+            },
+            "Key": "Application"
+          },
+          {
+            "Value": "Public",
+            "Key": "Network"
+          }
+        ]
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "c75ee4dd-ace9-4928-b975-e02d5b9d9885"
+        }
+      }
+    },
+    "OutboundHTTPPublicNetworkAclEntry": {
+      "Type": "AWS::EC2::NetworkAclEntry",
+      "Properties": {
+        "NetworkAclId": {
+          "Ref": "PublicNetworkAcl"
+        },
+        "RuleNumber": "100",
+        "Protocol": "6",
+        "PortRange": {
+          "To": "80",
+          "From": "80"
+        },
+        "Egress": "true",
+        "RuleAction": "allow",
+        "CidrBlock": "0.0.0.0/0"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "842cad5b-7dc7-4b68-a45d-d3c529158025"
+        }
+      }
+    },
+    "ServerScaleUpPolicy": {
+      "Type": "AWS::AutoScaling::ScalingPolicy",
+      "Properties": {
+        "ScalingAdjustment": "1",
+        "Cooldown": "300",
+        "AutoScalingGroupName": {
+          "Ref": "ServerAutoScalingGroup"
+        },
+        "AdjustmentType": "ChangeInCapacity"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "1732bef4-60b2-4d44-be32-2d10e2bd6d48"
+        }
+      }
+    },
+    "ServerScaleDownPolicy": {
+      "Type": "AWS::AutoScaling::ScalingPolicy",
+      "Properties": {
+        "ScalingAdjustment": "-1",
+        "Cooldown": "300",
+        "AutoScalingGroupName": {
+          "Ref": "ServerAutoScalingGroup"
+        },
+        "AdjustmentType": "ChangeInCapacity"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "b8b45086-c898-4589-aa9a-f20b18d4a8ed"
+        }
+      }
+    },
+    "S3BucketSonyDeveloperStaticDevSeMcComCfLogsDev": {
+      "DeletionPolicy": "Delete",
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "AccessControl": "LogDeliveryWrite",
+        "BucketName": "sony-developer-static-dev.se-mc.com.cflogs.dev"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "fb3c2d15-12f9-47fd-914a-56f22b1120ab"
+        }
+      }
+    },
+    "DatabaseSubnetGroup": {
+      "Type": "AWS::RDS::DBSubnetGroup",
+      "Properties": {
+        "SubnetIds": [
+          {
+            "Ref": "PublicSubnet1"
+          },
+          {
+            "Ref": "PublicSubnet2"
+          },
+          {
+            "Ref": "PublicSubnet3"
+          }
+        ],
+        "DBSubnetGroupDescription": "Database subnet group for the MySQL database"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "c32eef2d-c66e-4291-9ff9-178835fd949c"
+        }
+      }
+    },
+    "CPUAlarmLow": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "EvaluationPeriods": "2",
+        "Dimensions": [
+          {
+            "Name": "AutoScalingGroupName",
+            "Value": {
+              "Ref": "ServerAutoScalingGroup"
+            }
+          }
+        ],
+        "AlarmActions": [
+          {
+            "Ref": "ServerScaleDownPolicy"
+          }
+        ],
+        "AlarmDescription": "Scale-down if CPU < 30% for 10 minutes",
+        "Namespace": "AWS/EC2",
+        "Period": "300",
+        "ComparisonOperator": "LessThanThreshold",
+        "Statistic": "Average",
+        "Threshold": "30",
+        "MetricName": "CPUUtilization"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "4a115e41-fe4d-46fe-af2c-d94cd92cc526"
+        }
+      }
+    },
+    "InboundHTTPPublicNetworkAclEntry": {
+      "Type": "AWS::EC2::NetworkAclEntry",
+      "Properties": {
+        "NetworkAclId": {
+          "Ref": "PublicNetworkAcl"
+        },
+        "RuleNumber": "100",
+        "Protocol": "6",
+        "PortRange": {
+          "To": "80",
+          "From": "80"
+        },
+        "Egress": "false",
+        "RuleAction": "allow",
+        "CidrBlock": "0.0.0.0/0"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "fccc0755-b644-46bd-9982-409489b2443a"
+        }
+      }
+    },
+    "SQSReadDeleteSESMessagesIAM": {
+      "Type": "AWS::IAM::User",
+      "Properties": {
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "sqs-ses-read-delete",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Action": [
+                    "sqs:DeleteMessage",
+                    "sqs:ReceiveMessage",
+                    "sqs:GetQueueAttributes"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::GetAtt": [
+                        "SESBounceComplaintsQueue",
+                        "Arn"
+                      ]
+                    }
+                  ],
+                  "Effect": "Allow"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "de0bd113-dcd2-4fd7-90d9-d9e7fa6e5483"
+        }
+      }
+    },
+    "PublicSubnet3NetworkAclAssociation": {
+      "Type": "AWS::EC2::SubnetNetworkAclAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PublicSubnet3"
+        },
+        "NetworkAclId": {
+          "Ref": "PublicNetworkAcl"
+        }
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "22747d06-c0a5-46e3-a908-120aa0365e23"
+        }
+      }
+    },
+    "InboundHTTPSPublicNetworkAclEntry": {
+      "Type": "AWS::EC2::NetworkAclEntry",
+      "Properties": {
+        "NetworkAclId": {
+          "Ref": "PublicNetworkAcl"
+        },
+        "RuleNumber": "101",
+        "Protocol": "6",
+        "PortRange": {
+          "To": "443",
+          "From": "443"
+        },
+        "Egress": "false",
+        "RuleAction": "allow",
+        "CidrBlock": "0.0.0.0/0"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "cbd9e5c0-be1b-403e-9d45-462595713604"
+        }
+      }
+    },
+    "CPUAlarmHigh": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "EvaluationPeriods": "2",
+        "Dimensions": [
+          {
+            "Name": "AutoScalingGroupName",
+            "Value": {
+              "Ref": "ServerAutoScalingGroup"
+            }
+          }
+        ],
+        "AlarmActions": [
+          {
+            "Ref": "ServerScaleUpPolicy"
+          }
+        ],
+        "AlarmDescription": "Scale-up if CPU > 70% for 10 minutes",
+        "Namespace": "AWS/EC2",
+        "Period": "300",
+        "ComparisonOperator": "GreaterThanThreshold",
+        "Statistic": "Average",
+        "Threshold": "70",
+        "MetricName": "CPUUtilization"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "d4cc180f-24cb-4b48-8d78-058edacced46"
+        }
+      }
+    },
+    "VPC": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "EnableDnsSupport": "True",
+        "CidrBlock": "10.0.0.0/16",
+        "EnableDnsHostnames": "True",
+        "Tags": [
+          {
+            "Value": {
+              "Ref": "AWS::StackId"
+            },
+            "Key": "Application"
+          },
+          {
+            "Value": "Public",
+            "Key": "Network"
+          }
+        ]
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "029e81f9-dd7e-4890-a208-a59a01c3ac09"
+        }
+      }
+    },
+    "S3BucketD22cuk03zgji1kCloudfrontNetCfLogsDev": {
+      "DeletionPolicy": "Delete",
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "AccessControl": "LogDeliveryWrite",
+        "BucketName": "d22cuk03zgji1k.cloudfront.net.cflogs.dev"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "b73da585-6184-43da-859b-51d1c54b60b4"
+        }
+      }
+    },
+    "ServerInstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [
+          "ec2.admin"
+        ]
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "4f13bb5b-4574-4e13-9043-4b6e0629477b"
+        }
+      }
+    },
+    "S3BucketDeveloperSonyComBackupDev": {
+      "DeletionPolicy": "Delete",
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "AccessControl": "Private",
+        "BucketName": "developer.sony.com.backup.dev"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "de018441-4c9a-42e3-b977-cb808ca262c9"
+        }
+      }
+    },
+    "AttachGateway": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "InternetGatewayId": {
+          "Ref": "InternetGateway"
+        }
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "5e4cdcc5-2333-4184-ad42-0109c571fab5"
+        }
+      }
+    },
+    "OutBoundSSLPublicNetworkAclEntry": {
+      "Type": "AWS::EC2::NetworkAclEntry",
+      "Properties": {
+        "NetworkAclId": {
+          "Ref": "PublicNetworkAcl"
+        },
+        "RuleNumber": "102",
+        "Protocol": "6",
+        "PortRange": {
+          "To": "22",
+          "From": "22"
+        },
+        "Egress": "true",
+        "RuleAction": "allow",
+        "CidrBlock": "0.0.0.0/0"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "e77b928d-9051-43b4-91fe-0cf53e27af3a"
+        }
+      }
+    },
+    "LoadBalancerSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "SecurityGroupIngress": [
+          {
+            "ToPort": "80",
+            "FromPort": "80",
+            "IpProtocol": "tcp",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "ToPort": "443",
+            "FromPort": "443",
+            "IpProtocol": "tcp",
+            "CidrIp": "0.0.0.0/0"
+          }
+        ],
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "GroupDescription": "Enables access to the ELB"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "cf2becb7-bca9-42a0-9525-b70722af0c4f"
+        }
+      }
+    },
+    "S3BucketD22cuk03zgji1kCloudfrontNetDev": {
+      "DeletionPolicy": "Delete",
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "AccessControl": "Private",
+        "BucketName": "d22cuk03zgji1k.cloudfront.net.dev"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "2406e59d-3d00-4fbd-b8ae-905c0e2a94bb"
+        }
+      }
+    },
+    "SESBounceSNSTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "TopicName": "ses-complaints-topic",
+        "Subscription": [
+          {
+            "Endpoint": {
+              "Fn::GetAtt": [
+                "SESBounceComplaintsQueue",
+                "Arn"
+              ]
+            },
+            "Protocol": "sqs"
+          }
+        ]
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "a8ac5278-cddd-47a6-9c93-abe6bd6a3f41"
+        }
+      }
+    },
+    "EmailAlertSNSTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "a0187673-7a8f-4c11-8f6a-8eacfbc11a3c"
+        }
+      }
+    },
+    "S3BucketSonyDeveloperStaticDevSeMcComDev": {
+      "DeletionPolicy": "Delete",
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "AccessControl": "PublicRead",
+        "BucketName": "sony-developer-static-dev.se-mc.com.dev"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "fbfefd1a-4c4c-4ed1-a11d-41fbc599cb1f"
+        }
+      }
+    },
+    "SESBounceComplaintsQueueDepthAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "EvaluationPeriods": "1",
+        "Dimensions": [
+          {
+            "Name": "QueueName",
+            "Value": {
+              "Fn::GetAtt": [
+                "SESBounceComplaintsQueue",
+                "QueueName"
+              ]
+            }
+          }
+        ],
+        "AlarmActions": [
+          {
+            "Ref": "EmailAlertSNSTopic"
+          }
+        ],
+        "AlarmDescription": "Alarm if queue depth grows beyond 10 messages",
+        "Namespace": "AWS/SQS",
+        "Period": "300",
+        "ComparisonOperator": "GreaterThanThreshold",
+        "Statistic": "Sum",
+        "Threshold": "10",
+        "InsufficientDataActions": [
+          {
+            "Ref": "EmailAlertSNSTopic"
+          }
+        ],
+        "MetricName": "ApproximateNumberOfMessagesVisible"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "3b9bab5a-2b35-44d1-944a-ef899e8454ba"
+        }
+      }
+    },
+    "SQSReadDeleteSESAccessKey": {
+      "Type": "AWS::IAM::AccessKey",
+      "Properties": {
+        "UserName": {
+          "Ref": "SQSReadDeleteSESMessagesIAM"
+        }
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "d6e9e6be-7a07-4dd1-af7d-4fb51e3f0f30"
+        }
+      }
+    },
+    "PublicSubnet1RouteTableAssociation": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PublicSubnet1"
+        },
+        "RouteTableId": {
+          "Ref": "PublicRouteTable"
+        }
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "d96e85e9-633b-4768-8c06-3084d27fc0d2"
+        }
+      }
+    },
+    "SESBounceComplaintsQueuePolicy": {
+      "Type": "AWS::SQS::QueuePolicy",
+      "Properties": {
+        "Queues": [
+          {
+            "Ref": "SESBounceComplaintsQueue"
+          }
+        ],
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Id": "SESBounceComplaintsQueuePolicy",
+          "Statement": [
+            {
+              "Action": "SQS:SendMessage",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "SESBounceComplaintsQueue",
+                  "Arn"
+                ]
+              },
+              "Effect": "Allow",
+              "Condition": {
+                "ArnEquals": {
+                  "aws:SourceArn": {
+                    "Ref": "SESBounceSNSTopic"
+                  }
+                }
+              },
+              "Principal": "*"
+            },
+            {
+              "Action": "SQS:SendMessage",
+              "Resource": {
+                "Fn::GetAtt": [
+                  "SESBounceComplaintsQueue",
+                  "Arn"
+                ]
+              },
+              "Effect": "Allow",
+              "Condition": {
+                "ArnEquals": {
+                  "aws:SourceArn": {
+                    "Ref": "SESComplaintsSNSTopic"
+                  }
+                }
+              },
+              "Principal": "*"
+            }
+          ]
+        }
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "293c46ae-a704-4f50-9cd3-f40a47b9342e"
+        }
+      }
+    },
+    "ServerLaunchConfiguration": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Properties": {
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/bash -v\n",
+                "# Helper function\n",
+                "function error_exit\n",
+                "{\n",
+                "  /usr/local/bin/cfn-signal -e 1 -r \"$1\" '",
+                {
+                  "Ref": "WaitHandle"
+                },
+                "'\n",
+                "  /usr/local/bin/cfn-signal --success false --resource ServerAutoScalingGroup --stack ",
+                {
+                  "Ref": "AWS::StackName"
+                },
+                " --region ",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "\n",
+                "  exit 1\n",
+                "}\n",
+                "# Install software\n",
+                "/usr/local/bin/cfn-init -v -c cumulus -s ",
+                {
+                  "Ref": "AWS::StackName"
+                },
+                " -r ServerLaunchConfiguration ",
+                "    --access-key ",
+                {
+                  "Ref": "ServerKeys"
+                },
+                "    --secret-key ",
+                {
+                  "Fn::GetAtt": [
+                    "ServerKeys",
+                    "SecretAccessKey"
+                  ]
+                },
+                "    --region ",
+                {
+                  "Ref": "AWS::Region"
+                },
+                " >> /var/log/cfn-init.log || error_exit 'Failed to run cfn-init'\n",
+                "\n",
+                "# Check that nginx and php works properly, exit code will be 0 if HTTP status is 2xx\n",
+                "httping -c 1 -s -G -m localhost/onesonydev.version.php || error_exit 'Failed httping to onesonydev.version.php'\n",
+                "\n",
+                "# Start up the cfn-hup daemon to listen for changes to the server metadata\n",
+                "/usr/local/bin/cfn-hup || error_exit 'Failed to start cfn-hup'\n",
+                "# All is well so signal success\n",
+                "/usr/local/bin/cfn-signal -e 0 -r \"Server setup complete\" '",
+                {
+                  "Ref": "WaitHandle"
+                },
+                "'\n",
+                "/usr/local/bin/cfn-signal --success true --resource ServerAutoScalingGroup --stack ",
+                {
+                  "Ref": "AWS::StackName"
+                },
+                " --region ",
+                {
+                  "Ref": "AWS::Region"
+                },
+                "\n"
+              ]
+            ]
+          }
+        },
+        "ImageId": {
+          "Fn::FindInMap": [
+            "AWSRegionArch2AMI",
+            {
+              "Ref": "AWS::Region"
+            },
+            {
+              "Fn::FindInMap": [
+                "AWSInstanceType2Arch",
+                {
+                  "Ref": "InstanceType"
+                },
+                "Arch"
+              ]
+            }
+          ]
+        },
+        "KeyName": {
+          "Ref": "KeyName"
+        },
+        "SecurityGroups": [
+          {
+            "Ref": "ServerSecurityGroup"
+          }
+        ],
+        "IamInstanceProfile": {
+          "Ref": "ServerInstanceProfile"
+        },
+        "InstanceType": {
+          "Ref": "InstanceType"
+        },
+        "AssociatePublicIpAddress": "true"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Authentication": {
+          "S3Access": {
+            "secretKey": {
+              "Fn::GetAtt": [
+                "ServerKeys",
+                "SecretAccessKey"
+              ]
+            },
+            "type": "S3",
+            "accessKeyId": {
+              "Ref": "ServerKeys"
+            }
+          }
+        },
+        "AWS::CloudFormation::Init": {
+          "fileConfig": {
+            "files": {
+              "/etc/cfn/cfn-hup.conf": {
+                "content": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "[main]\n",
+                      "stack=",
+                      {
+                        "Ref": "AWS::StackName"
+                      },
+                      "\n",
+                      "credential-file=/etc/cfn/cfn-credentials\n",
+                      "region=",
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      "\n",
+                      "interval=1\n"
+                    ]
+                  ]
+                },
+                "owner": "root",
+                "group": "root",
+                "mode": "000400"
+              },
+              "/etc/cfn/hooks.d/cfn-auto-reloader.conf": {
+                "content": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "[cfn-auto-reloader-hook]\n",
+                      "triggers=post.update\n",
+                      "path=Resources.ServerLaunchConfiguration.Metadata.AWS::CloudFormation::Init\n",
+                      "action=/usr/local/bin/cfn-init -c cumulus -s ",
+                      {
+                        "Ref": "AWS::StackName"
+                      },
+                      " -r ServerLaunchConfiguration ",
+                      " --credential-file /etc/cfn/cfn-credentials ",
+                      " --region ",
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      "\n",
+                      "runas=root\n"
+                    ]
+                  ]
+                }
+              },
+              "/usr/local/bin/cumulus_bundle_handler.py": {
+                "owner": "root",
+                "source": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "http://s3-",
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      ".amazonaws.com/",
+                      {
+                        "Ref": "CumulusBundleBucket"
+                      },
+                      "/",
+                      {
+                        "Ref": "CumulusEnvironment"
+                      },
+                      "/",
+                      {
+                        "Ref": "CumulusVersion"
+                      },
+                      "/cumulus_bundle_handler.py"
+                    ]
+                  ]
+                },
+                "authentication": "S3Access",
+                "group": "root",
+                "mode": "000755"
+              },
+              "/etc/cumulus/metadata.conf": {
+                "content": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "[metadata]\n",
+                      "access-key-id: ",
+                      {
+                        "Ref": "ServerKeys"
+                      },
+                      "\n",
+                      "secret-access-key: ",
+                      {
+                        "Fn::GetAtt": [
+                          "ServerKeys",
+                          "SecretAccessKey"
+                        ]
+                      },
+                      "\n",
+                      "region: ",
+                      {
+                        "Ref": "AWS::Region"
+                      },
+                      "\n",
+                      "bundle-bucket: ",
+                      {
+                        "Ref": "CumulusBundleBucket"
+                      },
+                      "\n",
+                      "environment: ",
+                      {
+                        "Ref": "CumulusEnvironment"
+                      },
+                      "\n",
+                      "bundle-types: core,config\n",
+                      "version: ",
+                      {
+                        "Ref": "CumulusVersion"
+                      },
+                      "\n"
+                    ]
+                  ]
+                },
+                "owner": "root",
+                "group": "root",
+                "mode": "000644"
+              },
+              "/etc/cfn/cfn-credentials": {
+                "content": {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "AWSAccessKeyId=",
+                      {
+                        "Ref": "ServerKeys"
+                      },
+                      "\n",
+                      "AWSSecretKey=",
+                      {
+                        "Fn::GetAtt": [
+                          "ServerKeys",
+                          "SecretAccessKey"
+                        ]
+                      },
+                      "\n"
+                    ]
+                  ]
+                },
+                "owner": "root",
+                "group": "root",
+                "mode": "000400"
+              }
+            }
+          },
+          "commandConfig": {
+            "commands": {
+              "cumulus_bundle_handler": {
+                "ignoreErrors": "false",
+                "command": "/usr/local/bin/cumulus_bundle_handler.py"
+              }
+            }
+          },
+          "configSets": {
+            "cumulus": [
+              "fileConfig",
+              "commandConfig"
+            ]
+          }
+        },
+        "AWS::CloudFormation::Designer": {
+          "id": "541f16a8-bde1-43e0-949d-ac467df6f245"
+        }
+      }
+    },
+    "PublicSubnet1NetworkAclAssociation": {
+      "Type": "AWS::EC2::SubnetNetworkAclAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PublicSubnet1"
+        },
+        "NetworkAclId": {
+          "Ref": "PublicNetworkAcl"
+        }
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "273245b9-6a44-4e87-9ca5-3f535a3fcf3a"
+        }
+      }
+    },
+    "PublicSubnet2NetworkAclAssociation": {
+      "Type": "AWS::EC2::SubnetNetworkAclAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PublicSubnet2"
+        },
+        "NetworkAclId": {
+          "Ref": "PublicNetworkAcl"
+        }
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "646b8ae8-1333-4002-bf11-6fe9c562d162"
+        }
+      }
+    },
+    "SESBounceComplaintsQueue": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": "ses-bounces-complaints"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "5d59f487-85f7-41d3-993d-03eff7ddcbc9"
+        }
+      }
+    },
+    "SESComplaintsSNSTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "TopicName": "ses-bounce-topic",
+        "Subscription": [
+          {
+            "Endpoint": {
+              "Fn::GetAtt": [
+                "SESBounceComplaintsQueue",
+                "Arn"
+              ]
+            },
+            "Protocol": "sqs"
+          }
+        ]
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "fbc7eb4b-ace2-4dc7-b853-af72b2433d16"
+        }
+      }
+    },
+    "PublicRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "Tags": [
+          {
+            "Value": {
+              "Ref": "AWS::StackId"
+            },
+            "Key": "Application"
+          },
+          {
+            "Value": "Public",
+            "Key": "Network"
+          }
+        ]
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "39ec98ca-586f-4f45-95b6-452df6f94e7d"
+        }
+      }
+    },
+    "WaitCondition": {
+      "Type": "AWS::CloudFormation::WaitCondition",
+      "Properties": {
+        "Handle": {
+          "Ref": "WaitHandle"
+        },
+        "Timeout": "600"
+      },
+      "DependsOn": "ServerAutoScalingGroup",
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "a5dab842-4ca7-4eb4-ad91-90f9a9cda11a"
+        }
+      }
+    },
+    "ServerAutoScalingGroup": {
+      "UpdatePolicy": {
+        "AutoScalingScheduledAction": {
+          "IgnoreUnmodifiedGroupSizeProperties": "true"
+        },
+        "AutoScalingRollingUpdate": {
+          "PauseTime": "PT5M",
+          "WaitOnResourceSignals": "true",
+          "MaxBatchSize": "1",
+          "MinInstancesInService": "2"
+        }
+      },
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "NotificationConfigurations": [
+          {
+            "NotificationTypes": [
+              "autoscaling:EC2_INSTANCE_LAUNCH",
+              "autoscaling:EC2_INSTANCE_LAUNCH_ERROR",
+              "autoscaling:EC2_INSTANCE_TERMINATE",
+              "autoscaling:EC2_INSTANCE_TERMINATE_ERROR"
+            ],
+            "TopicARN": {
+              "Ref": "EmailAlertSNSTopic"
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Value": {
+              "Fn::Join": [
+                "-",
+                [
+                  {
+                    "Ref": "AWS::StackName"
+                  },
+                  "frontend"
+                ]
+              ]
+            },
+            "PropagateAtLaunch": "true",
+            "Key": "Name"
+          }
+        ],
+        "LaunchConfigurationName": {
+          "Ref": "ServerLaunchConfiguration"
+        },
+        "MinSize": "2",
+        "MaxSize": "15",
+        "VPCZoneIdentifier": [
+          {
+            "Ref": "PublicSubnet1"
+          },
+          {
+            "Ref": "PublicSubnet2"
+          },
+          {
+            "Ref": "PublicSubnet3"
+          }
+        ],
+        "TerminationPolicies": [
+          "OldestInstance"
+        ],
+        "LoadBalancerNames": [
+          {
+            "Ref": "ElasticLoadBalancer"
+          }
+        ],
+        "AvailabilityZones": [
+          {
+            "Fn::GetAtt": [
+              "PublicSubnet1",
+              "AvailabilityZone"
+            ]
+          },
+          {
+            "Fn::GetAtt": [
+              "PublicSubnet2",
+              "AvailabilityZone"
+            ]
+          },
+          {
+            "Fn::GetAtt": [
+              "PublicSubnet3",
+              "AvailabilityZone"
+            ]
+          }
+        ]
+      },
+      "CreationPolicy": {
+        "ResourceSignal": {
+          "Count": 1,
+          "Timeout": "PT10M"
+        }
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "de303bd0-d15f-4fef-9f52-3fd953f0ed8a"
+        }
+      }
+    },
+    "PublicSubnet1": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "AvailabilityZone": "eu-west-1a",
+        "CidrBlock": "10.0.1.0/24",
+        "Tags": [
+          {
+            "Value": {
+              "Ref": "AWS::StackId"
+            },
+            "Key": "Application"
+          },
+          {
+            "Value": "Public",
+            "Key": "Network"
+          }
+        ]
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "355dae81-7328-43e4-97f3-415a74b1e169"
+        }
+      }
+    },
+    "PublicSubnet3": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "AvailabilityZone": "eu-west-1c",
+        "CidrBlock": "10.0.3.0/24",
+        "Tags": [
+          {
+            "Value": {
+              "Ref": "AWS::StackId"
+            },
+            "Key": "Application"
+          },
+          {
+            "Value": "Public",
+            "Key": "Network"
+          }
+        ]
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "d2ccb3ee-4ede-4993-a977-54eb3ab81e4f"
+        }
+      }
+    },
+    "PublicSubnet2": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "AvailabilityZone": "eu-west-1b",
+        "CidrBlock": "10.0.2.0/24",
+        "Tags": [
+          {
+            "Value": {
+              "Ref": "AWS::StackId"
+            },
+            "Key": "Application"
+          },
+          {
+            "Value": "Public",
+            "Key": "Network"
+          }
+        ]
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "a242137e-3c35-45a9-8052-28d9071f2a31"
+        }
+      }
+    },
+    "ServerSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "SecurityGroupIngress": [
+          {
+            "SourceSecurityGroupId": {
+              "Ref": "LoadBalancerSecurityGroup"
+            },
+            "FromPort": "80",
+            "ToPort": "80",
+            "IpProtocol": "tcp"
+          },
+          {
+            "SourceSecurityGroupId": {
+              "Ref": "LoadBalancerSecurityGroup"
+            },
+            "FromPort": "443",
+            "ToPort": "443",
+            "IpProtocol": "tcp"
+          },
+          {
+            "ToPort": "22",
+            "FromPort": "22",
+            "IpProtocol": "tcp",
+            "CidrIp": "54.247.104.255/32"
+          }
+        ],
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "GroupDescription": "Enables HTTP access via port 80/443 (from ELB only) and SSH access (from resource server only)"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "854543fa-23b1-4f25-9b1d-02d8f58d9e3e"
+        }
+      }
+    },
+    "ElasticLoadBalancer": {
+      "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+      "Properties": {
+        "Subnets": [
+          {
+            "Ref": "PublicSubnet1"
+          },
+          {
+            "Ref": "PublicSubnet2"
+          },
+          {
+            "Ref": "PublicSubnet3"
+          }
+        ],
+        "HealthCheck": {
+          "HealthyThreshold": "3",
+          "Interval": "30",
+          "Target": {
+            "Fn::Join": [
+              "",
+              [
+                "HTTP:",
+                "80",
+                "/onesonydev.version.php"
+              ]
+            ]
+          },
+          "Timeout": "5",
+          "UnhealthyThreshold": "5"
+        },
+        "LBCookieStickinessPolicy": [
+          {
+            "PolicyName": "ElasticLoadBalancerStickinessPolicy"
+          }
+        ],
+        "Listeners": [
+          {
+            "InstancePort": "80",
+            "PolicyNames": [
+              "ElasticLoadBalancerStickinessPolicy"
+            ],
+            "LoadBalancerPort": "80",
+            "Protocol": "HTTP"
+          },
+          {
+            "InstancePort": "80",
+            "Protocol": "HTTPS",
+            "InstanceProtocol": "HTTP",
+            "LoadBalancerPort": "443",
+            "PolicyNames": [
+              "ElasticLoadBalancerStickinessPolicy",
+              "Mozilla-modern-2015-03"
+            ],
+            "SSLCertificateId": "arn:aws:iam::360868169527:server-certificate/cloudfront/onesonydev-dev/developer.sony.com-2017-12-09"
+          }
+        ],
+        "SecurityGroups": [
+          {
+            "Ref": "LoadBalancerSecurityGroup"
+          }
+        ],
+        "Policies": [
+          {
+            "Attributes": [
+              {
+                "Name": "Protocol-TLSv1.2",
+                "Value": true
+              },
+              {
+                "Name": "Server-Defined-Cipher-Order",
+                "Value": true
+              },
+              {
+                "Name": "ECDHE-ECDSA-AES128-GCM-SHA256",
+                "Value": true
+              },
+              {
+                "Name": "ECDHE-RSA-AES128-GCM-SHA256",
+                "Value": true
+              },
+              {
+                "Name": "ECDHE-ECDSA-AES128-SHA256",
+                "Value": true
+              },
+              {
+                "Name": "ECDHE-RSA-AES128-SHA256",
+                "Value": true
+              },
+              {
+                "Name": "ECDHE-ECDSA-AES256-GCM-SHA384",
+                "Value": true
+              },
+              {
+                "Name": "ECDHE-RSA-AES256-GCM-SHA384",
+                "Value": true
+              },
+              {
+                "Name": "ECDHE-ECDSA-AES256-SHA384",
+                "Value": true
+              },
+              {
+                "Name": "ECDHE-RSA-AES256-SHA384",
+                "Value": true
+              }
+            ],
+            "PolicyType": "SSLNegotiationPolicyType",
+            "PolicyName": "Mozilla-modern-2015-03"
+          }
+        ]
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "3569cd74-b105-478c-967b-2c7648d6d663"
+        }
+      }
+    },
+    "PublicNetworkAcl": {
+      "Type": "AWS::EC2::NetworkAcl",
+      "Properties": {
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "Tags": [
+          {
+            "Value": {
+              "Ref": "AWS::StackId"
+            },
+            "Key": "Application"
+          },
+          {
+            "Value": "Public",
+            "Key": "Network"
+          }
+        ]
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "14e41124-5afe-4422-bc9c-c14d0ea72586"
+        }
+      }
+    },
+    "S3BucketDeveloperSonyComCfLogsDev": {
+      "DeletionPolicy": "Delete",
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "AccessControl": "LogDeliveryWrite",
+        "BucketName": "developer.sony.com.cflogs.dev"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "971ec035-a584-49c0-a4e6-bd3f7d0f27f0"
+        }
+      }
+    },
+    "DatabaseSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "SecurityGroupIngress": [
+          {
+            "SourceSecurityGroupId": {
+              "Ref": "ServerSecurityGroup"
+            },
+            "FromPort": "3306",
+            "ToPort": "3306",
+            "IpProtocol": "tcp"
+          },
+          {
+            "ToPort": "3306",
+            "FromPort": "3306",
+            "IpProtocol": "tcp",
+            "CidrIp": "54.247.104.255/32"
+          }
+        ],
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "GroupDescription": "Enables instances and resource server access to the MySQL database"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "656bcd00-c985-4c3b-a86c-fb5ad5063a33"
+        }
+      }
+    },
+    "OutBoundSMTPPortPublicNetworkAclEntry": {
+      "Type": "AWS::EC2::NetworkAclEntry",
+      "Properties": {
+        "NetworkAclId": {
+          "Ref": "PublicNetworkAcl"
+        },
+        "RuleNumber": "104",
+        "Protocol": "6",
+        "PortRange": {
+          "To": "25",
+          "From": "25"
+        },
+        "Egress": "true",
+        "RuleAction": "allow",
+        "CidrBlock": "0.0.0.0/0"
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "cdd598f6-d1db-47c5-bc6b-3bbb82fd0e30"
+        }
+      }
+    },
+    "PublicSubnet3RouteTableAssociation": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "PublicSubnet3"
+        },
+        "RouteTableId": {
+          "Ref": "PublicRouteTable"
+        }
+      },
+      "Metadata": {
+        "AWS::CloudFormation::Designer": {
+          "id": "6d935ecd-a52e-4b61-b626-d4b113e46e75"
+        }
+      }
+    }
+  },
+  "Mappings": {
+    "AWSInstanceType2Arch": {
+      "m3.medium": {
+        "Arch": "64"
+      }
+    },
+    "AWSRegionArch2AMI": {
+      "eu-west-1": {
+        "64": "ami-41597c27",
+        "64HVM": "NOT_SUPPORTED"
+      }
+    }
+  },
+  "Metadata": {
+    "AWS::CloudFormation::Designer": {
+      "971ec035-a584-49c0-a4e6-bd3f7d0f27f0": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 1080,
+          "y": 300
+        },
+        "z": 1,
+        "embeds": []
+      },
+      "5d59f487-85f7-41d3-993d-03eff7ddcbc9": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 1200,
+          "y": 300
+        },
+        "z": 1,
+        "embeds": []
+      },
+      "fbc7eb4b-ace2-4dc7-b853-af72b2433d16": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 1080,
+          "y": 420
+        },
+        "z": 1,
+        "embeds": [],
+        "isrelatedto": [
+          "5d59f487-85f7-41d3-993d-03eff7ddcbc9"
+        ]
+      },
+      "fbfefd1a-4c4c-4ed1-a11d-41fbc599cb1f": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 1200,
+          "y": 420
+        },
+        "z": 1,
+        "embeds": []
+      },
+      "a0187673-7a8f-4c11-8f6a-8eacfbc11a3c": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 1080,
+          "y": 540
+        },
+        "z": 1,
+        "embeds": []
+      },
+      "3b9bab5a-2b35-44d1-944a-ef899e8454ba": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 1200,
+          "y": 540
+        },
+        "z": 1,
+        "embeds": [],
+        "isrelatedto": [
+          "5d59f487-85f7-41d3-993d-03eff7ddcbc9",
+          "a0187673-7a8f-4c11-8f6a-8eacfbc11a3c"
+        ]
+      },
+      "a8ac5278-cddd-47a6-9c93-abe6bd6a3f41": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 1080,
+          "y": 660
+        },
+        "z": 1,
+        "embeds": [],
+        "isrelatedto": [
+          "5d59f487-85f7-41d3-993d-03eff7ddcbc9"
+        ]
+      },
+      "293c46ae-a704-4f50-9cd3-f40a47b9342e": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 1200,
+          "y": 660
+        },
+        "z": 1,
+        "embeds": [],
+        "isassociatedwith": [
+          "5d59f487-85f7-41d3-993d-03eff7ddcbc9"
+        ],
+        "isrelatedto": [
+          "a8ac5278-cddd-47a6-9c93-abe6bd6a3f41",
+          "fbc7eb4b-ace2-4dc7-b853-af72b2433d16"
+        ]
+      },
+      "2406e59d-3d00-4fbd-b8ae-905c0e2a94bb": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 1080,
+          "y": 780
+        },
+        "z": 1,
+        "embeds": []
+      },
+      "de018441-4c9a-42e3-b977-cb808ca262c9": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 1200,
+          "y": 780
+        },
+        "z": 1,
+        "embeds": []
+      },
+      "4f13bb5b-4574-4e13-9043-4b6e0629477b": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 1080,
+          "y": 900
+        },
+        "z": 1,
+        "embeds": []
+      },
+      "b73da585-6184-43da-859b-51d1c54b60b4": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 1200,
+          "y": 900
+        },
+        "z": 1,
+        "embeds": []
+      },
+      "029e81f9-dd7e-4890-a208-a59a01c3ac09": {
+        "size": {
+          "width": 960,
+          "height": 960
+        },
+        "position": {
+          "x": 60,
+          "y": 90
+        },
+        "z": 1,
+        "embeds": [
+          "14e41124-5afe-4422-bc9c-c14d0ea72586",
+          "a242137e-3c35-45a9-8052-28d9071f2a31",
+          "d2ccb3ee-4ede-4993-a977-54eb3ab81e4f",
+          "355dae81-7328-43e4-97f3-415a74b1e169",
+          "39ec98ca-586f-4f45-95b6-452df6f94e7d",
+          "cf2becb7-bca9-42a0-9525-b70722af0c4f",
+          "854543fa-23b1-4f25-9b1d-02d8f58d9e3e",
+          "656bcd00-c985-4c3b-a86c-fb5ad5063a33"
+        ]
+      },
+      "14e41124-5afe-4422-bc9c-c14d0ea72586": {
+        "size": {
+          "width": 600,
+          "height": 510
+        },
+        "position": {
+          "x": 90,
+          "y": 150
+        },
+        "z": 2,
+        "parent": "029e81f9-dd7e-4890-a208-a59a01c3ac09",
+        "embeds": [
+          "cdd598f6-d1db-47c5-bc6b-3bbb82fd0e30",
+          "e77b928d-9051-43b4-91fe-0cf53e27af3a",
+          "cbd9e5c0-be1b-403e-9d45-462595713604",
+          "fccc0755-b644-46bd-9982-409489b2443a",
+          "842cad5b-7dc7-4b68-a45d-d3c529158025",
+          "037a9ed5-b743-446d-80f4-0df74b588db2",
+          "64b1fcbf-7113-446b-91bd-c0935bee7e8b",
+          "58fd7cfa-8075-44ec-873f-6cca4ab59ead",
+          "5b904384-fef8-4535-8e33-a9ce9e860ca2",
+          "f1683882-e786-4272-b124-511ff8ae812d"
+        ]
+      },
+      "cdd598f6-d1db-47c5-bc6b-3bbb82fd0e30": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 120,
+          "y": 210
+        },
+        "z": 3,
+        "parent": "14e41124-5afe-4422-bc9c-c14d0ea72586",
+        "embeds": []
+      },
+      "e77b928d-9051-43b4-91fe-0cf53e27af3a": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 240,
+          "y": 210
+        },
+        "z": 3,
+        "parent": "14e41124-5afe-4422-bc9c-c14d0ea72586",
+        "embeds": []
+      },
+      "a242137e-3c35-45a9-8052-28d9071f2a31": {
+        "size": {
+          "width": 150,
+          "height": 150
+        },
+        "position": {
+          "x": 750,
+          "y": 570
+        },
+        "z": 2,
+        "parent": "029e81f9-dd7e-4890-a208-a59a01c3ac09",
+        "embeds": []
+      },
+      "646b8ae8-1333-4002-bf11-6fe9c562d162": {
+        "source": {
+          "id": "14e41124-5afe-4422-bc9c-c14d0ea72586"
+        },
+        "target": {
+          "id": "a242137e-3c35-45a9-8052-28d9071f2a31"
+        },
+        "z": 2
+      },
+      "d2ccb3ee-4ede-4993-a977-54eb3ab81e4f": {
+        "size": {
+          "width": 150,
+          "height": 150
+        },
+        "position": {
+          "x": 750,
+          "y": 360
+        },
+        "z": 2,
+        "parent": "029e81f9-dd7e-4890-a208-a59a01c3ac09",
+        "embeds": []
+      },
+      "355dae81-7328-43e4-97f3-415a74b1e169": {
+        "size": {
+          "width": 150,
+          "height": 150
+        },
+        "position": {
+          "x": 750,
+          "y": 150
+        },
+        "z": 2,
+        "parent": "029e81f9-dd7e-4890-a208-a59a01c3ac09",
+        "embeds": []
+      },
+      "273245b9-6a44-4e87-9ca5-3f535a3fcf3a": {
+        "source": {
+          "id": "14e41124-5afe-4422-bc9c-c14d0ea72586"
+        },
+        "target": {
+          "id": "355dae81-7328-43e4-97f3-415a74b1e169"
+        },
+        "z": 2
+      },
+      "39ec98ca-586f-4f45-95b6-452df6f94e7d": {
+        "size": {
+          "width": 240,
+          "height": 240
+        },
+        "position": {
+          "x": 90,
+          "y": 720
+        },
+        "z": 2,
+        "parent": "029e81f9-dd7e-4890-a208-a59a01c3ac09",
+        "embeds": [
+          "f7f47623-5a29-4c7c-a5c7-e83a8e326e1e"
+        ]
+      },
+      "6d935ecd-a52e-4b61-b626-d4b113e46e75": {
+        "source": {
+          "id": "39ec98ca-586f-4f45-95b6-452df6f94e7d"
+        },
+        "target": {
+          "id": "d2ccb3ee-4ede-4993-a977-54eb3ab81e4f"
+        },
+        "z": 2
+      },
+      "d96e85e9-633b-4768-8c06-3084d27fc0d2": {
+        "source": {
+          "id": "39ec98ca-586f-4f45-95b6-452df6f94e7d"
+        },
+        "target": {
+          "id": "355dae81-7328-43e4-97f3-415a74b1e169"
+        },
+        "z": 2
+      },
+      "cf2becb7-bca9-42a0-9525-b70722af0c4f": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 390,
+          "y": 720
+        },
+        "z": 2,
+        "parent": "029e81f9-dd7e-4890-a208-a59a01c3ac09",
+        "embeds": []
+      },
+      "3569cd74-b105-478c-967b-2c7648d6d663": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 1080,
+          "y": 1020
+        },
+        "z": 1,
+        "embeds": [],
+        "isconnectedto": [
+          "355dae81-7328-43e4-97f3-415a74b1e169",
+          "a242137e-3c35-45a9-8052-28d9071f2a31",
+          "d2ccb3ee-4ede-4993-a977-54eb3ab81e4f"
+        ],
+        "ismemberof": [
+          "cf2becb7-bca9-42a0-9525-b70722af0c4f"
+        ]
+      },
+      "854543fa-23b1-4f25-9b1d-02d8f58d9e3e": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 510,
+          "y": 720
+        },
+        "z": 2,
+        "parent": "029e81f9-dd7e-4890-a208-a59a01c3ac09",
+        "embeds": [],
+        "isrelatedto": [
+          "cf2becb7-bca9-42a0-9525-b70722af0c4f"
+        ]
+      },
+      "656bcd00-c985-4c3b-a86c-fb5ad5063a33": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 630,
+          "y": 720
+        },
+        "z": 2,
+        "parent": "029e81f9-dd7e-4890-a208-a59a01c3ac09",
+        "embeds": [],
+        "isrelatedto": [
+          "854543fa-23b1-4f25-9b1d-02d8f58d9e3e"
+        ]
+      },
+      "cbd9e5c0-be1b-403e-9d45-462595713604": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 120,
+          "y": 330
+        },
+        "z": 3,
+        "parent": "14e41124-5afe-4422-bc9c-c14d0ea72586",
+        "embeds": []
+      },
+      "22747d06-c0a5-46e3-a908-120aa0365e23": {
+        "source": {
+          "id": "14e41124-5afe-4422-bc9c-c14d0ea72586"
+        },
+        "target": {
+          "id": "d2ccb3ee-4ede-4993-a977-54eb3ab81e4f"
+        },
+        "z": 2
+      },
+      "de0bd113-dcd2-4fd7-90d9-d9e7fa6e5483": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 1200,
+          "y": 1020
+        },
+        "z": 1,
+        "embeds": [],
+        "isrelatedto": [
+          "5d59f487-85f7-41d3-993d-03eff7ddcbc9"
+        ]
+      },
+      "d6e9e6be-7a07-4dd1-af7d-4fb51e3f0f30": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 60,
+          "y": 1110
+        },
+        "z": 1,
+        "embeds": [],
+        "isrelatedto": [
+          "de0bd113-dcd2-4fd7-90d9-d9e7fa6e5483"
+        ]
+      },
+      "fccc0755-b644-46bd-9982-409489b2443a": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 240,
+          "y": 330
+        },
+        "z": 3,
+        "parent": "14e41124-5afe-4422-bc9c-c14d0ea72586",
+        "embeds": []
+      },
+      "c32eef2d-c66e-4291-9ff9-178835fd949c": {
+        "size": {
+          "width": 150,
+          "height": 150
+        },
+        "position": {
+          "x": 1080,
+          "y": 90
+        },
+        "z": 1,
+        "embeds": [],
+        "isconnectedto": [
+          "355dae81-7328-43e4-97f3-415a74b1e169",
+          "a242137e-3c35-45a9-8052-28d9071f2a31",
+          "d2ccb3ee-4ede-4993-a977-54eb3ab81e4f"
+        ]
+      },
+      "fb3c2d15-12f9-47fd-914a-56f22b1120ab": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 180,
+          "y": 1110
+        },
+        "z": 1,
+        "embeds": []
+      },
+      "842cad5b-7dc7-4b68-a45d-d3c529158025": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 360,
+          "y": 210
+        },
+        "z": 3,
+        "parent": "14e41124-5afe-4422-bc9c-c14d0ea72586",
+        "embeds": []
+      },
+      "c75ee4dd-ace9-4928-b975-e02d5b9d9885": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 300,
+          "y": 1110
+        },
+        "z": 1,
+        "embeds": []
+      },
+      "5e4cdcc5-2333-4184-ad42-0109c571fab5": {
+        "source": {
+          "id": "c75ee4dd-ace9-4928-b975-e02d5b9d9885"
+        },
+        "target": {
+          "id": "029e81f9-dd7e-4890-a208-a59a01c3ac09"
+        },
+        "z": 1
+      },
+      "c6f597d5-4b01-4515-9dff-fbe3c7137c55": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 420,
+          "y": 1110
+        },
+        "z": 1,
+        "embeds": []
+      },
+      "037a9ed5-b743-446d-80f4-0df74b588db2": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 360,
+          "y": 330
+        },
+        "z": 3,
+        "parent": "14e41124-5afe-4422-bc9c-c14d0ea72586",
+        "embeds": []
+      },
+      "64b1fcbf-7113-446b-91bd-c0935bee7e8b": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 120,
+          "y": 450
+        },
+        "z": 3,
+        "parent": "14e41124-5afe-4422-bc9c-c14d0ea72586",
+        "embeds": []
+      },
+      "f7f47623-5a29-4c7c-a5c7-e83a8e326e1e": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 120,
+          "y": 780
+        },
+        "z": 3,
+        "parent": "39ec98ca-586f-4f45-95b6-452df6f94e7d",
+        "embeds": [],
+        "references": [
+          "c75ee4dd-ace9-4928-b975-e02d5b9d9885"
+        ],
+        "dependson": [
+          "5e4cdcc5-2333-4184-ad42-0109c571fab5"
+        ]
+      },
+      "286f67cc-44a6-4a29-a543-c72abb145059": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 540,
+          "y": 1110
+        },
+        "z": 1,
+        "embeds": []
+      },
+      "58fd7cfa-8075-44ec-873f-6cca4ab59ead": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 240,
+          "y": 450
+        },
+        "z": 3,
+        "parent": "14e41124-5afe-4422-bc9c-c14d0ea72586",
+        "embeds": []
+      },
+      "18685e83-da81-4bb9-88c9-6c2698efa7f6": {
+        "source": {
+          "id": "39ec98ca-586f-4f45-95b6-452df6f94e7d"
+        },
+        "target": {
+          "id": "a242137e-3c35-45a9-8052-28d9071f2a31"
+        },
+        "z": 2
+      },
+      "178a0d04-724a-4c21-bf04-2bd6a967cf91": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 660,
+          "y": 1110
+        },
+        "z": 1,
+        "embeds": []
+      },
+      "5b904384-fef8-4535-8e33-a9ce9e860ca2": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 360,
+          "y": 450
+        },
+        "z": 3,
+        "parent": "14e41124-5afe-4422-bc9c-c14d0ea72586",
+        "embeds": []
+      },
+      "3607695d-881c-4504-a962-21deafbb23b4": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 780,
+          "y": 1110
+        },
+        "z": 1,
+        "embeds": []
+      },
+      "541f16a8-bde1-43e0-949d-ac467df6f245": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 900,
+          "y": 1110
+        },
+        "z": 1,
+        "embeds": [],
+        "ismemberof": [
+          "854543fa-23b1-4f25-9b1d-02d8f58d9e3e"
+        ],
+        "isrelatedto": [
+          "178a0d04-724a-4c21-bf04-2bd6a967cf91",
+          "3607695d-881c-4504-a962-21deafbb23b4",
+          "4f13bb5b-4574-4e13-9043-4b6e0629477b"
+        ]
+      },
+      "de303bd0-d15f-4fef-9f52-3fd953f0ed8a": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 1020,
+          "y": 1140
+        },
+        "z": 1,
+        "embeds": [],
+        "isconnectedto": [
+          "355dae81-7328-43e4-97f3-415a74b1e169",
+          "a242137e-3c35-45a9-8052-28d9071f2a31",
+          "d2ccb3ee-4ede-4993-a977-54eb3ab81e4f",
+          "3569cd74-b105-478c-967b-2c7648d6d663"
+        ],
+        "isassociatedwith": [
+          "541f16a8-bde1-43e0-949d-ac467df6f245"
+        ],
+        "isrelatedto": [
+          "a0187673-7a8f-4c11-8f6a-8eacfbc11a3c"
+        ]
+      },
+      "a5dab842-4ca7-4eb4-ad91-90f9a9cda11a": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 1140,
+          "y": 1140
+        },
+        "z": 1,
+        "embeds": [],
+        "references": [
+          "178a0d04-724a-4c21-bf04-2bd6a967cf91"
+        ],
+        "dependson": [
+          "de303bd0-d15f-4fef-9f52-3fd953f0ed8a"
+        ]
+      },
+      "b8b45086-c898-4589-aa9a-f20b18d4a8ed": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 1290,
+          "y": 90
+        },
+        "z": 1,
+        "embeds": [],
+        "isassociatedwith": [
+          "de303bd0-d15f-4fef-9f52-3fd953f0ed8a"
+        ]
+      },
+      "4a115e41-fe4d-46fe-af2c-d94cd92cc526": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 1260,
+          "y": 1140
+        },
+        "z": 1,
+        "embeds": [],
+        "isrelatedto": [
+          "de303bd0-d15f-4fef-9f52-3fd953f0ed8a",
+          "b8b45086-c898-4589-aa9a-f20b18d4a8ed"
+        ]
+      },
+      "1732bef4-60b2-4d44-be32-2d10e2bd6d48": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 60,
+          "y": 1230
+        },
+        "z": 1,
+        "embeds": [],
+        "isassociatedwith": [
+          "de303bd0-d15f-4fef-9f52-3fd953f0ed8a"
+        ]
+      },
+      "d4cc180f-24cb-4b48-8d78-058edacced46": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 180,
+          "y": 1230
+        },
+        "z": 1,
+        "embeds": [],
+        "isrelatedto": [
+          "de303bd0-d15f-4fef-9f52-3fd953f0ed8a",
+          "1732bef4-60b2-4d44-be32-2d10e2bd6d48"
+        ]
+      },
+      "f1683882-e786-4272-b124-511ff8ae812d": {
+        "size": {
+          "width": 60,
+          "height": 60
+        },
+        "position": {
+          "x": 480,
+          "y": 210
+        },
+        "z": 3,
+        "parent": "14e41124-5afe-4422-bc9c-c14d0ea72586",
+        "embeds": []
+      }
+    }
+  }
+}
