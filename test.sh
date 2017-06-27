@@ -1,4 +1,5 @@
 #!/bin/sh
+[ $# -lt 1 ]&& echo "Need Input a status" && exit 1
 STATUS="$1"
 while true;
 do
