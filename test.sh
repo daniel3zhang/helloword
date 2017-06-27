@@ -5,7 +5,7 @@ while true;
 do
 if [ "$STATUS" == "UPDATE_COMPLETE" ] ; then
   echo "Adding change to git repository"
-break
+  break
 elif [ "$STATUS" == "UPDATE_ROLLBACK_COMPLETE" ] ;then
 	echo "Error: CloudFormation status ($STATUS), cannot continue automatically.."
 	exit 1
